@@ -1,0 +1,18 @@
+lease {
+  interface "eth0";
+  fixed-address 10.67.21.85;
+  option subnet-mask 255.255.255.0;
+  option routers 10.67.21.1;
+  option dhcp-lease-time 3600;
+  option dhcp-message-type 5;
+  option domain-name-servers 10.67.21.1;
+  option dhcp-server-identifier 10.67.21.1;
+  option dhcp-renewal-time 1800;
+  option broadcast-address 10.67.21.255;
+  option dhcp-rebinding-time 3150;
+  option host-name "u1";
+  option domain-name "lxd";
+  renew 5 2023/11/03 10:52:09;
+  rebind 5 2023/11/03 11:19:56;
+  expire 5 2023/11/03 11:27:26;
+}
