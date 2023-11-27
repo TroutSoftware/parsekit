@@ -1,4 +1,4 @@
-ParseKit is a simple, no-surprise library to build parser and lexers.
+ParseKit is a simple, no-surprise library to build parsers and lexers.
 
 It provides the starting blocks needed (and most often forgotten) to make good parser:
  - solid error reporting and parser synchronization
@@ -7,7 +7,7 @@ It provides the starting blocks needed (and most often forgotten) to make good p
 
 ## Choices made in the package
 
-There are many, many techniques to write a parser ([LALR generators](https://sqlite.org/lemon.html), [PEG](https://www.inf.puc-rio.br/~roberto/lpeg/), [parser combinators](https://serokell.io/blog/parser-combinators-in-haskell)), …).
+There are many, many techniques to write a parser ([LALR generators](https://sqlite.org/lemon.html), [PEG](https://www.inf.puc-rio.br/~roberto/lpeg/), [parser combinators](https://serokell.io/blog/parser-combinators-in-haskell), …).
 
 The authors do not claim to have invented anything new, or even smart, but instead chosen a few boring techniques working well together:
  - the program is in control, not using callbacks – leads to a better debugging experience, and code that look more like regular Go
