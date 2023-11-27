@@ -30,6 +30,15 @@ $2 ~ /[a-zA-Z0-9]…[a-zA-Z0-9]/ { # handle ranges
     states[$1] = $1; chars[$2] = $2; transitions[$1, $2] = $4 }
 
 END {
+	iota = 0
+	print "const ("
+	for (st in states) {
+		print st " = " iota
+		iota++
+	}
+	print "final = " iota
+	print ")"
+	print ""
 	print "var transitions = [final][]byte{"
 	for (st in states) {
 		printf "\t" st ": {"
