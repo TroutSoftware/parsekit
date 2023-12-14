@@ -4,6 +4,7 @@ package parsekit
 import (
 	"errors"
 	"fmt"
+	"io"
 )
 
 // Parser implements a recursive descent parser.
@@ -37,6 +38,11 @@ type Lexer func(sc *Scanner, lead rune) (rune, int)
 // ReadFiles is an option to specify which files are to be parsed
 func ReadFiles(docs ...string) ParserOptions {
 	return func(e *emb) { e.sc = ScanFiles(docs...) }
+}
+
+// ReadFrom is an option to specify to read from an existing reader (e.g. stdin)
+func ReadFrom(in io.ReadCloser) ParserOptions {
+	return func(e *emb) { e.sc = ScanReader(in) }
 }
 
 // WithLexer options sets the lexer used by the parser
@@ -82,7 +88,8 @@ type parseError struct {
 // Error implements error.
 func (e parseError) Error() string { return fmt.Sprintf("at %s: %s", e.pos, e.msg) }
 
-const eof = -1
+const eof = 0
+
 // More returns true if input is left in the stream.
 func (p *Parser[T]) More() bool { p.next(); p.peek = true; return p.tok != eof }
 
@@ -97,6 +104,10 @@ func (p *Parser[T]) next() {
 	}
 
 	tk := p.sc.Token()
+	if tk == eof {
+		p.tok = tk
+		return
+	}
 	var off int
 	p.tok, off = p.lx(p.sc, tk)
 	p.Lit = string(p.sc.bytes(off))
@@ -133,7 +144,7 @@ func (p *Parser[T]) Match(tk ...rune) bool {
 func (p *Parser[T]) Skip() { p.next() }
 
 // Synchronize handles error recovery in the parsing process:
-// when an error occurs, the parser panics all the way to the [Parse.Synchronize] function.
+// when an error occurs, the parser panics all the way to the [Parser.Synchronize] function.
 // All tokens are thrown until the first of lits is found
 //
 // Run this in a top-level `defer` statement in at the level of the synchronisation elements.

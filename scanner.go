@@ -129,6 +129,13 @@ func ScanFiles(names ...string) *Scanner {
 	return &sc
 }
 
+func ScanReader(in io.ReadCloser) *Scanner {
+	return &Scanner{
+		br:   byteReader{r: in},
+		last: &file{next: &file{Name: "<input>"}},
+	}
+}
+
 // Token reads the next character in the stream, skipping white spaces.
 func (s *Scanner) Token() rune {
 	w := s.br.window()
@@ -152,9 +159,8 @@ fLoop:
 		}
 
 		if s.br.extend() == 0 {
-			// eof
 			if s.last.next == nil {
-				return 0
+				return eof
 			}
 			if s.br.r != nil {
 				s.br.r.Close() // no error check, only reading
