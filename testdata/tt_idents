@@ -1,7 +1,0 @@
-ident SP -> final
-ident ; -> final
-ident a…z -> ident
-ident A…Z -> ident
-ident 0…9 -> ident
-ident _ -> ident
-ident - -> ident

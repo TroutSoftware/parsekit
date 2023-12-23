@@ -20,6 +20,7 @@ type Parser[T any] struct {
 	errors error
 }
 
+// dedicated type for options in parser – avoid generics in ParserOptions
 type emb struct {
 	sc      *Scanner
 	lx      Lexer
@@ -41,8 +42,12 @@ func ReadFiles(docs ...string) ParserOptions {
 }
 
 // ReadFrom is an option to specify to read from an existing reader (e.g. stdin)
-func ReadFrom(in io.ReadCloser) ParserOptions {
-	return func(e *emb) { e.sc = ScanReader(in) }
+func ReadFrom(in io.Reader) ParserOptions {
+	ic, ok := in.(io.ReadCloser)
+	if !ok {
+		ic = io.NopCloser(in)
+	}
+	return func(e *emb) { e.sc = ScanReader(ic) }
 }
 
 // WithLexer options sets the lexer used by the parser
@@ -72,7 +77,7 @@ func Init[T any](opts ...ParserOptions) *Parser[T] {
 //	   parseConfig(p)
 //	   return p.Finish()
 //	}
-func (p *Parser[T]) Finish() (*T, error) { return p.Value, p.errors }
+func (p *Parser[T]) Finish() (T, error) { return *p.Value, p.errors }
 
 // Errf triggers a panic mode with the given formatted error.
 // The position is correctly attached to the error.

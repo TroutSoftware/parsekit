@@ -7,12 +7,6 @@ import (
 	"unicode/utf8"
 )
 
-// objectives:
-//  - fast scanner based on iopipe (0 alloc)
-//  - position handling
-//  - state machine for text, identifiers and integers
-//  - UTF-8 compliant
-
 // Position is a value that represents a source position.
 // A position is valid if Line > 0.
 type Position struct {
@@ -53,8 +47,13 @@ type byteReader struct {
 	err  error
 }
 
-func (b *byteReader) release(n int)    { b.off += n }
-func (b *byteReader) window() []byte   { return b.data[b.off:] }
+func (b *byteReader) release(n int) { b.off += n }
+func (b *byteReader) window() []byte {
+	if b.off == len(b.data) {
+		b.extend()
+	}
+	return b.data[b.off:]
+}
 func (b *byteReader) rearview() []byte { return b.data[:b.off] }
 func (b *byteReader) extend() int {
 	if b.err != nil || b.r == nil {

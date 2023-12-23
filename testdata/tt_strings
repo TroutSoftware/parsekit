@@ -1,7 +1,0 @@
-begin " -> string
-
-string CA -> string
-string \ -> escaped
-string " -> final
-
-escaped CA -> string
