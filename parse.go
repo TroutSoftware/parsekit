@@ -16,7 +16,7 @@ type Parser[T any] struct {
 	tok  rune   // token lookahead
 	Lit  string // token literal
 
-	Value  *T
+	Value  T
 	errors error
 }
 
@@ -25,6 +25,7 @@ type emb struct {
 	sc      *Scanner
 	lx      Lexer
 	syncLit []string
+	verbose bool
 }
 
 // ParserOptions specialize the behavior of the parser.
@@ -57,6 +58,8 @@ func WithLexer(lx Lexer) ParserOptions { return func(e *emb) { e.lx = lx } }
 // See [Parser.Synchronize] for full documentation.
 func SynchronizeAt(lits ...string) ParserOptions { return func(c *emb) { c.syncLit = lits } }
 
+func Verbose() ParserOptions { return func(e *emb) { e.verbose = true } }
+
 // Init creates a new parser.
 // At least two options must be provided: (1) a reader, and (2) a lexer function.
 // Further options (e.g. [SynchronizeAt])
@@ -65,7 +68,7 @@ func Init[T any](opts ...ParserOptions) *Parser[T] {
 	for _, o := range opts {
 		o(&p.emb)
 	}
-	p.Value = new(T)
+
 	return &p
 }
 
@@ -77,7 +80,7 @@ func Init[T any](opts ...ParserOptions) *Parser[T] {
 //	   parseConfig(p)
 //	   return p.Finish()
 //	}
-func (p *Parser[T]) Finish() (T, error) { return *p.Value, p.errors }
+func (p *Parser[T]) Finish() (T, error) { return p.Value, p.errors }
 
 // Errf triggers a panic mode with the given formatted error.
 // The position is correctly attached to the error.
@@ -109,6 +112,9 @@ func (p *Parser[T]) next() {
 	}
 
 	tk := p.sc.Token()
+	if p.verbose {
+		fmt.Printf("PARSEKIT: at %s, token %s\n", p.sc.Pos(), prettyrune(tk))
+	}
 	if tk == eof {
 		p.tok = tk
 		return
@@ -117,6 +123,14 @@ func (p *Parser[T]) next() {
 	p.tok, off = p.lx(p.sc, tk)
 	p.Lit = string(p.sc.bytes(off))
 	p.sc.Advance(off)
+}
+
+func prettyrune(r rune) string {
+	if r > 0 {
+		return fmt.Sprintf("%q", r)
+	} else {
+		return fmt.Sprintf("%d", r)
+	}
 }
 
 // ErrLit is the literal value set after a failed call to [Parser.Expect]
@@ -132,7 +146,7 @@ func (p *Parser[T]) Expect(tk rune, msg string) {
 }
 
 // Match returns true if tk is found at the current parsing point.
-// It does not consume any input, so can be used in a test.
+// It does not consume any input on failure, so can be used in a test.
 func (p *Parser[T]) Match(tk ...rune) bool {
 	p.next()
 	p.peek = true
@@ -147,6 +161,10 @@ func (p *Parser[T]) Match(tk ...rune) bool {
 
 // Skip throws away the next token
 func (p *Parser[T]) Skip() { p.next() }
+
+// Unread revert back n bytes before (use utf8.RuneLen to map to a given rune size).
+// Unread must be called after the call that need to be unread.
+func (p *Parser[T]) Unread(n int) { p.sc.br.off -= n }
 
 // Synchronize handles error recovery in the parsing process:
 // when an error occurs, the parser panics all the way to the [Parser.Synchronize] function.

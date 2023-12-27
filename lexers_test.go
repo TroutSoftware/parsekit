@@ -14,9 +14,9 @@ func TestLexString(t *testing.T) {
 	}{
 		{`"hello"`, 0, 7},
 		{`"handle \" escaped"`, 0, 19},
+		{`'accept other quotes'`, 0, 21},
 		// invalid cases
 		{`"unterminated`, 0, 13},
-		{`'not a string'`, 0, 0},
 		// test boundary
 		{``, 0, 0},
 		{"\"" + strings.Repeat(`lorem ipsum `, 30_000) + "\"", 0, 360_002},

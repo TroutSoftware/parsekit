@@ -130,8 +130,9 @@ func ScanFiles(names ...string) *Scanner {
 
 func ScanReader(in io.ReadCloser) *Scanner {
 	return &Scanner{
-		br:   byteReader{r: in},
-		last: &file{next: &file{Name: "<input>"}},
+		br:     byteReader{r: in},
+		last:   &file{Name: "<input>"},
+		offset: 0, line: 1,
 	}
 }
 
@@ -142,18 +143,19 @@ func (s *Scanner) Token() rune {
 
 fLoop:
 	for {
-		for i, c := range w {
-			switch c {
+		for i := 0; i < len(w); {
+			r, sz := utf8.DecodeRune(w[i:])
+			i += sz
+			switch r {
 			case '\n':
 				s.line++
 				fallthrough
 			case ' ', '\r', '\t':
-				blk++
+				blk += sz
 				continue
 			}
 
 			s.br.release(blk)
-			r, _ := utf8.DecodeRune(w[i:])
 			return r
 		}
 

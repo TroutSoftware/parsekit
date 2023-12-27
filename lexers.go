@@ -1,17 +1,18 @@
 package parsekit
 
 // LexString returns the number of characters in the next string value.
-// Strings are delimited between double quotes, and support \" escaping.
+// Strings are delimited between double quotes, single quotes and backtick, and support \" escaping.
 // This lexer assumes the first character of the string (the initial ") has not yet been consumed.
 func (s *Scanner) LexString() (n int) {
 	w := s.br.window()
 	// sanity check
-	if len(w) == 0 || w[0] != '"' {
+	if len(w) == 0 || !quotechars[w[0]] {
 		return 0
 	}
 
 	offset := 1
 	escaped := false
+	quote := w[0]
 
 winLoop:
 	for _, char := range w[offset:] {
@@ -19,7 +20,7 @@ winLoop:
 		switch {
 		case escaped:
 			escaped = false
-		case char == '"':
+		case char == quote:
 			return offset
 		case char == '\\':
 			escaped = true
@@ -32,6 +33,8 @@ winLoop:
 	w = s.br.window()
 	goto winLoop
 }
+
+var quotechars = [256]bool{'"': true, '\'': true, '`': true}
 
 // LexIdent returns the number of characters in the next identifier value.
 // Identifier are recognized as characters (a-zA-Z ASCII) and underscore or dash.
