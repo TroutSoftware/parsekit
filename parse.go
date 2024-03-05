@@ -117,6 +117,7 @@ func (p *Parser[T]) next() {
 	}
 	if tk == eof {
 		p.tok = tk
+		p.Lit = "<EOF>"
 		return
 	}
 	var off int

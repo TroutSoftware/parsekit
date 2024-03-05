@@ -27,6 +27,7 @@ $2 ~ /[a-zA-Z0-9]…[a-zA-Z0-9]/ { # handle ranges
 
  { if ($2 == "SP") $2 = " "
    if ($2 == "\\") $2 = "\\\\"
+   if ($2 == "'") $2 = "\\'"
     states[$1] = $1; chars[$2] = $2; transitions[$1, $2] = $4 }
 
 END {
