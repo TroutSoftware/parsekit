@@ -1,3 +1,3 @@
-module github.com/TroutSoftware/parsekit
+module github.com/TroutSoftware/parsekit/v2
 
-go 1.21
+go 1.23

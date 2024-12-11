@@ -1,9 +1,12 @@
 package parsekit
 
 import (
+	"encoding"
 	"fmt"
-	"io"
+	"iter"
 	"os"
+	"reflect"
+	"strconv"
 	"unicode/utf8"
 )
 
@@ -30,219 +33,148 @@ func (pos Position) String() string {
 	return s
 }
 
-const (
-	bufLen      = 8192 // at least utf8.UTFMax
-	minReadSize = bufLen >> 2
-)
-
-// zero-alloc byte reader from underlying stream.
-// Original idea: https://dave.cheney.net/high-performance-json.html#_reading
-//
-// TODO: evaluate if we need to shrink the reader
-// TODO: align windows at utf8 boundaries
-type byteReader struct {
-	data []byte
-	off  int
-	r    io.ReadCloser
-	err  error
-}
-
-func (b *byteReader) release(n int) { b.off += n }
-func (b *byteReader) window() []byte {
-	if b.off == len(b.data) {
-		b.extend()
-	}
-	return b.data[b.off:]
-}
-func (b *byteReader) rearview() []byte { return b.data[:b.off] }
-func (b *byteReader) extend() int {
-	if b.err != nil || b.r == nil {
-		return 0
-	}
-
-	remaining := len(b.data) - b.off
-	if remaining == 0 {
-		b.data = b.data[:0]
-		b.off = 0
-	}
-
-	if cap(b.data)-len(b.data) >= minReadSize {
-		// enough space
-	} else if cap(b.data)-remaining >= minReadSize {
-		b.compact() // move data to front
-	} else {
-		b.grow() // allocate more
-	}
-	remaining += b.off
-	n, err := b.r.Read(b.data[remaining:cap(b.data)])
-	b.data = b.data[:remaining+n]
-	b.err = err
-	return n
-}
-
-func (b *byteReader) grow() {
-	buf := make([]byte, max(cap(b.data)*2, bufLen))
-	copy(buf, b.data[b.off:])
-	b.data = buf
-	b.off = 0
-}
-
-func (b *byteReader) compact() {
-	copy(b.data, b.data[b.off:])
-	b.off = 0
-}
-
-// Scanner reads tokens from a stream of multiple files.
-// It efficiently tracks position information.
+// Scanner reads lexemes from a source
 type Scanner struct {
-	br byteReader
+	src string
 
-	files, last  *file
-	line, offset int
+	start, off int
+
+	err error // TODO use this as a way to quickly bail out of parsing
 }
 
-type file struct {
-	Name string
-	next *file
-}
-
-// Error exposes the underlying [io.Reader] error
-func (sc *Scanner) Error() error { return sc.br.err }
-
-// ScanFiles create a scanner over files with names.
-// Files are scanned in the order they are given in, and no token can span two files.
-func ScanFiles(names ...string) *Scanner {
-	var sc Scanner
-	var last *file
-	for _, f := range names {
-		if last == nil {
-			sc.files = &file{Name: f}
-			last = sc.files
-		} else {
-			last.next = &file{Name: f}
-			last = last.next
+// ReadFile reads the content of file name, and passes it to the scanner.
+func ReadFile(name string) ParserOptions {
+	return func(p *emb) {
+		dt, err := os.ReadFile(name)
+		if err != nil {
+			p.sc = &Scanner{err: err}
+			return
 		}
-	}
-	sc.last = &file{next: sc.files} // placeholder to initalize the read
-	sc.br.err = io.EOF
-	return &sc
-}
-
-func ScanReader(in io.ReadCloser) *Scanner {
-	return &Scanner{
-		br:     byteReader{r: in},
-		last:   &file{Name: "<input>"},
-		offset: 0, line: 1,
+		p.sc = &Scanner{src: string(dt)}
 	}
 }
 
-// Token reads the next character in the stream, skipping white spaces.
-func (s *Scanner) Token() rune {
-	w := s.br.window()
-	blk := 0
-
-fLoop:
-	for {
-		for i := 0; i < len(w); {
-			r, sz := utf8.DecodeRune(w[i:])
-			i += sz
-			switch r {
-			case '\n':
-				s.line++
-				fallthrough
-			case ' ', '\r', '\t':
-				blk += sz
-				continue
-			}
-
-			s.br.release(blk)
-			return r
-		}
-
-		if s.br.extend() == 0 {
-			if s.last.next == nil {
-				return eof
-			}
-			if s.br.r != nil {
-				s.br.r.Close() // no error check, only reading
-			}
-
-			s.last = s.last.next
-			s.br.r, s.br.err = os.Open(s.last.Name)
-			s.br.extend()
-			w = s.br.window()
-			s.offset, s.line = 0, 1
-			continue fLoop
-		}
+// ReadString creates a scanner on src.
+func ReadString(src string) ParserOptions {
+	return func(p *emb) {
+		p.sc = &Scanner{src: src}
 	}
 }
 
-// CatchAll is a well-known transition that get applied if no other transition matches.
-const CatchAll = 0
-
-// ScanWithTable uses the state transitions table to read the next characters.
-// A transition table consists, for each state, of the pair (token, next_state).
-// Transitions table can be constructed from a readable textual definition using the transgen.awk script.
-func (s *Scanner) ScanWithTable(transitions [][]byte) (prev uint8, n int) {
-	offset := 0
-	state, end := uint8(0), uint8(len(transitions)) // by construction of the caller
-	w := s.br.window()
-winLoop:
-	for _, elem := range w[offset:] {
-		tt := transitions[state]
-		for i := 0; i < len(tt); i += 2 {
-			if tt[i] == elem {
-				nstate := tt[i+1]
-				if nstate == end {
-					return state, offset
+// Tokens returns a stream of Tokens from the underlying scanner.
+// The lexer is called repetitively on all yet unread content, and its
+// tokens are returned for consumption in the parser.
+func (s *Scanner) Tokens(lx Lexer) iter.Seq[Token] {
+	return func(yield func(Token) bool) {
+		s.start = 0
+		for s.off < len(s.src) {
+			tk := lx(s)
+			if tk != Ignore {
+				tk.Lexeme = s.src[s.start:s.off]
+				if !yield(tk) {
+					return
 				}
-				offset++
-				state = nstate
-				continue winLoop
 			}
-		}
-		if tt[0] == CatchAll {
-			nstate := tt[1]
-			if nstate == end {
-				return state, offset
-			}
-			offset++
-			state = nstate
-			continue winLoop
-		}
-		return state, offset
-	}
 
-	// need more data
-	if s.br.extend() == 0 {
-		return state, offset
+			s.start = s.off
+		}
+
+		yield(EOF)
 	}
-	w = s.br.window()
-	goto winLoop
 }
 
-func (s *Scanner) bytes(n int) []byte { return s.br.window()[:n] }
+// Advances returns the next character in the stream, and increment the read counter.
+func (s *Scanner) Advance() rune {
+	if s.off == len(s.src) {
+		return utf8.RuneError
+	}
 
-// Advance moves the cursor by n bytes.
-func (s *Scanner) Advance(n int) { s.br.release(n); s.offset += n }
+	r, sz := utf8.DecodeRuneInString(s.src[s.off:])
+	s.off += sz
+	return r
+}
 
-// Pos returns the parser position, including the current column.
-func (s *Scanner) Pos() Position {
-	col := 0
-	w := s.br.rearview()
-	for i := len(w); i > 0; {
-		r, sz := utf8.DecodeLastRune(w[:i])
-		col++
-		if r == '\n' {
-			break
+// Peek returns the next character in the stream, without incrementing the read counter.
+func (s *Scanner) Peek() rune {
+	if s.off == len(s.src) {
+		return utf8.RuneError
+	}
+
+	r, _ := utf8.DecodeRuneInString(s.src[s.off:])
+	return r
+}
+
+// Cursor returns the string currently being scanned
+func (s *Scanner) Cursor() string { return string(s.src[s.start:s.off]) }
+
+// EOF is a marker token. The Lexer should return it when [Scanner.Advance] returns an invalid rune.
+var EOF Token
+
+// Ignore is a marker token. The Lexer should return it when the current token is to be ignored by the scanner,
+// and not passed to the parser.
+// This is useful to skip over comments, or empty lines.
+var Ignore Token
+
+type Token struct {
+	Type  rune
+	Value any
+
+	Lexeme string
+	Pos    Position
+}
+
+func (t Token) Error() error {
+	if t.Type != 0 {
+		return nil
+	}
+	return t.Value.(error)
+}
+
+// Const returns a constant token
+func Const(r rune) Token { return Token{Type: r} }
+
+type Identifier string
+
+// Auto returns a new token with value of type T.
+// The value is read from the current lexeme, and converted with:
+//
+//   - strconv.Unquote for strings if the first character is a quote
+//   - the lexeme directly for strings
+//   - strconv.ParseInt
+//   - unix and iso times for times
+//   - calling Unmarshaler otherwise
+//
+// If the value cannot be parsed, an error token is returned to the parser.
+func Auto[T any](r rune, sc *Scanner) Token {
+
+	tt := reflect.TypeFor[T]()
+	{
+		v := reflect.New(tt).Interface()
+		if v, ok := v.(encoding.TextUnmarshaler); ok {
+			if err := v.UnmarshalText([]byte(sc.Cursor())); err != nil {
+				return Token{Value: err}
+			}
+
+			return Token{Type: r, Value: reflect.ValueOf(v).Elem().Interface()}
 		}
-		i -= sz
 	}
 
-	return Position{
-		Filename: s.last.Name,
-		Line:     s.line,
-		Offset:   s.offset,
-		Column:   col, // note this might not work with too long lines, probably OK
+	switch tt {
+	case reflect.TypeFor[string]():
+		v, err := strconv.Unquote(sc.Cursor())
+		if err != nil {
+			return Token{Value: err}
+		}
+		return Token{Type: r, Value: v}
+	case reflect.TypeFor[int]():
+		v, err := strconv.ParseInt(sc.Cursor(), 10, 64)
+		if err != nil {
+			return Token{Value: err}
+		}
+		return Token{Type: r, Value: v}
+	case reflect.TypeFor[error]():
+		return Token{Type: r}
 	}
+
+	panic("not implemented")
 }

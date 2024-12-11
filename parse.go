@@ -4,7 +4,7 @@ package parsekit
 import (
 	"errors"
 	"fmt"
-	"io"
+	"iter"
 )
 
 // Parser implements a recursive descent parser.
@@ -12,9 +12,11 @@ import (
 type Parser[T any] struct {
 	emb
 
+	next func() (Token, bool)
+	stop func()
+
 	peek bool
-	tok  rune   // token lookahead
-	Lit  string // token literal
+	tok  Token // token lookahead
 
 	Value  T
 	errors error
@@ -22,8 +24,9 @@ type Parser[T any] struct {
 
 // dedicated type for options in parser – avoid generics in ParserOptions
 type emb struct {
-	sc      *Scanner
-	lx      Lexer
+	sc *Scanner
+	lx Lexer
+
 	syncLit []string
 	verbose bool
 }
@@ -31,25 +34,9 @@ type emb struct {
 // ParserOptions specialize the behavior of the parser.
 type ParserOptions func(*emb)
 
-// Lexer is a function to create tokens from a scanner.
-// lead is the first unicode point of the current token.
-// By convention, single-character tokens are represented by their own value (e.g. '{' -> U007B),
-// while multiple-character tokens are represented by negative runes (cf the package example).
-type Lexer func(sc *Scanner, lead rune) (rune, int)
-
-// ReadFiles is an option to specify which files are to be parsed
-func ReadFiles(docs ...string) ParserOptions {
-	return func(e *emb) { e.sc = ScanFiles(docs...) }
-}
-
-// ReadFrom is an option to specify to read from an existing reader (e.g. stdin)
-func ReadFrom(in io.Reader) ParserOptions {
-	ic, ok := in.(io.ReadCloser)
-	if !ok {
-		ic = io.NopCloser(in)
-	}
-	return func(e *emb) { e.sc = ScanReader(ic) }
-}
+// Lexer is a stateful function to read tokens from the scanner.
+// Each time the function returns, a new token is created, and the scanner advance.
+type Lexer func(s *Scanner) Token
 
 // WithLexer options sets the lexer used by the parser
 func WithLexer(lx Lexer) ParserOptions { return func(e *emb) { e.lx = lx } }
@@ -69,6 +56,8 @@ func Init[T any](opts ...ParserOptions) *Parser[T] {
 		o(&p.emb)
 	}
 
+	p.next, p.stop = iter.Pull(p.sc.Tokens(p.lx))
+
 	return &p
 }
 
@@ -85,7 +74,7 @@ func (p *Parser[T]) Finish() (T, error) { return p.Value, p.errors }
 // Errf triggers a panic mode with the given formatted error.
 // The position is correctly attached to the error.
 func (p *Parser[T]) Errf(format string, args ...any) {
-	panic(parseError{p.sc.Pos(), fmt.Sprintf(format, args...)})
+	panic(parseError{Position{}, fmt.Sprintf(format, args...)})
 }
 
 type parseError struct {
@@ -96,34 +85,12 @@ type parseError struct {
 // Error implements error.
 func (e parseError) Error() string { return fmt.Sprintf("at %s: %s", e.pos, e.msg) }
 
-const eof = 0
-
 // More returns true if input is left in the stream.
-func (p *Parser[T]) More() bool { p.next(); p.peek = true; return p.tok != eof }
-
-func (p *Parser[T]) next() {
-	if p.peek {
-		p.peek = false
-		return
-	}
-
-	if p.Lit == ErrLit {
-		return
-	}
-
-	tk := p.sc.Token()
-	if p.verbose {
-		fmt.Printf("PARSEKIT: at %s, token %s\n", p.sc.Pos(), prettyrune(tk))
-	}
-	if tk == eof {
-		p.tok = tk
-		p.Lit = "<EOF>"
-		return
-	}
-	var off int
-	p.tok, off = p.lx(p.sc, tk)
-	p.Lit = string(p.sc.bytes(off))
-	p.sc.Advance(off)
+// More does not advance the parser state, so use [Parser.Skip] or [Parser.Expect] to consume a value.
+func (p *Parser[T]) More() bool {
+	p.lnext()
+	p.peek = true
+	return p.tok != EOF
 }
 
 func prettyrune(r rune) string {
@@ -139,33 +106,47 @@ const ErrLit = "<error>"
 
 // Expects advances the parser to the next input, making sure it matches the token tk.
 func (p *Parser[T]) Expect(tk rune, msg string) {
-	p.next()
-	if p.tok == tk {
+	p.lnext()
+	if p.tok.Type == tk {
+		p.peek = false
 		return
 	}
-	p.Errf("expected %s, got %q instead", msg, p.Lit)
+	p.Errf("expected %s, got %q instead", msg, p.tok)
 }
 
 // Match returns true if tk is found at the current parsing point.
 // It does not consume any input on failure, so can be used in a test.
 func (p *Parser[T]) Match(tk ...rune) bool {
-	p.next()
+	p.lnext()
 	p.peek = true
 	for _, tk := range tk {
-		if p.tok == tk {
-			p.next()
+		if p.tok.Type == tk {
+			p.peek = false
 			return true
 		}
 	}
 	return false
 }
 
-// Skip throws away the next token
-func (p *Parser[T]) Skip() { p.next() }
+// Skip throws away the current token
+func (p *Parser[T]) Skip() {
+	if p.peek {
+		p.peek = false
+		return
+	}
+	p.lnext()
+}
 
-// Unread revert back n bytes before (use utf8.RuneLen to map to a given rune size).
-// Unread must be called after the call that need to be unread.
-func (p *Parser[T]) Unread(n int) { p.sc.br.off -= n }
+func (p *Parser[T]) lnext() {
+	if p.peek {
+		return
+	}
+
+	p.tok, _ = p.next()
+}
+
+func (p *Parser[T]) Lit() string { return p.tok.Lexeme }
+func (p *Parser[T]) Val() any    { return p.tok.Value }
 
 // Synchronize handles error recovery in the parsing process:
 // when an error occurs, the parser panics all the way to the [Parser.Synchronize] function.
@@ -183,14 +164,13 @@ func (p *Parser[T]) Synchronize() {
 	}
 
 	p.errors = errors.Join(p.errors, pe)
-	p.Lit = "" // reset state
 
 	for p.More() {
-		p.next()
 		for _, slit := range p.syncLit {
-			if p.Lit == slit {
+			if p.tok.Lexeme == slit {
 				return
 			}
 		}
+		p.Skip()
 	}
 }
