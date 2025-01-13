@@ -11,7 +11,7 @@ There are many, many techniques to write a parser ([LALR generators](https://sql
 
 The authors do not claim to have invented anything new, or even smart, but instead chosen a few boring techniques working well together:
  - the program is in control, not using callbacks – leads to a better debugging experience, and code that look more like regular Go
- - the tokenizer uses transition tables instead of regular expressions – we find reading the tables much easier, and code generation ensures an efficient FSA
+ - the tokenizer is split between a state management coroutine (handled in the library) and a lexer implementing the actual lexeme recognition (one at a time).
  - the parser is recursive descent, using panics for stack unwinding and synchronisation – the resulting code is also fairly straightforward, with little verbosity
 
 This choices work well, in practice, to read the kind of files the authors are most often confronted with (configuration files, DHCP leases, SNORT rules, …).
