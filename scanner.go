@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -37,6 +38,8 @@ func (pos Position) String() string {
 type Scanner struct {
 	src string
 
+	fname string
+
 	start, off int
 
 	err error // TODO use this as a way to quickly bail out of parsing
@@ -50,14 +53,14 @@ func ReadFile(name string) ParserOptions {
 			p.sc = &Scanner{err: err}
 			return
 		}
-		p.sc = &Scanner{src: string(dt)}
+		p.sc = &Scanner{src: string(dt), fname: name}
 	}
 }
 
 // ReadString creates a scanner on src.
 func ReadString(src string) ParserOptions {
 	return func(p *emb) {
-		p.sc = &Scanner{src: src}
+		p.sc = &Scanner{src: src, fname: "<input>"}
 	}
 }
 
@@ -65,11 +68,18 @@ func ReadString(src string) ParserOptions {
 // The lexer is called repetitively on all yet unread content, and its
 // tokens are returned for consumption in the parser.
 func (s *Scanner) Tokens(lx Lexer) iter.Seq[Token] {
+	if s.err != nil {
+		return func(yield func(Token) bool) {
+			yield(Token{Value: s.err})
+		}
+	}
+
 	return func(yield func(Token) bool) {
 		s.start = 0
 		for s.off < len(s.src) {
 			tk := lx(s)
 			if tk != Ignore {
+				tk.pos = s.start
 				tk.Lexeme = s.src[s.start:s.off]
 				if !yield(tk) {
 					return
@@ -107,33 +117,49 @@ func (s *Scanner) Peek() rune {
 // Cursor returns the string currently being scanned
 func (s *Scanner) Cursor() string { return string(s.src[s.start:s.off]) }
 
+// map between (efficient) offset and position in file
+func (s *Scanner) locate(tk Token) Position {
+	ln, col := 0, tk.pos
+	all := strings.Split(s.src[:tk.pos], "\n")
+	if len(all) > 1 {
+		for _, l := range all {
+			ln++
+			col -= len(l)
+		}
+	} else {
+		ln = 1
+	}
+	return Position{Filename: s.fname, Offset: tk.pos, Line: ln, Column: col}
+}
+
+const (
+	EOFToken = 0 - iota
+	InvalidToken
+
+	// ScanToken is a value to use as a base to declare custom token types,
+	// e.g.: const MyToken = ScanToken - iota
+	ScanToken
+)
+
 // EOF is a marker token. The Lexer should return it when [Scanner.Advance] returns an invalid rune.
 var EOF Token
 
 // Ignore is a marker token. The Lexer should return it when the current token is to be ignored by the scanner,
 // and not passed to the parser.
 // This is useful to skip over comments, or empty lines.
-var Ignore Token
+var Ignore = Token{Type: InvalidToken}
 
 type Token struct {
 	Type  rune
 	Value any
 
 	Lexeme string
-	Pos    Position
-}
 
-func (t Token) Error() error {
-	if t.Type != 0 {
-		return nil
-	}
-	return t.Value.(error)
+	pos int
 }
 
 // Const returns a constant token
 func Const(r rune) Token { return Token{Type: r} }
-
-type Identifier string
 
 // Auto returns a new token with value of type T.
 // The value is read from the current lexeme, and converted with:
@@ -172,8 +198,6 @@ func Auto[T any](r rune, sc *Scanner) Token {
 			return Token{Value: err}
 		}
 		return Token{Type: r, Value: v}
-	case reflect.TypeFor[error]():
-		return Token{Type: r}
 	}
 
 	panic("not implemented")

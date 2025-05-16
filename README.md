@@ -15,8 +15,3 @@ The authors do not claim to have invented anything new, or even smart, but inste
  - the parser is recursive descent, using panics for stack unwinding and synchronisation – the resulting code is also fairly straightforward, with little verbosity
 
 This choices work well, in practice, to read the kind of files the authors are most often confronted with (configuration files, DHCP leases, SNORT rules, …).
-
-## What next
-
-The test suite is wholly inadequate at the moment, so please feel free to submit bugs and repro cases.
-We also need to make the transition table more convenient to use with go generate, instead of a little AWK script.

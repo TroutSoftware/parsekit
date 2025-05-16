@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"slices"
 )
 
 // Parser implements a recursive descent parser.
@@ -28,7 +29,6 @@ type emb struct {
 	lx Lexer
 
 	syncLit []string
-	verbose bool
 }
 
 // ParserOptions specialize the behavior of the parser.
@@ -44,8 +44,6 @@ func WithLexer(lx Lexer) ParserOptions { return func(e *emb) { e.lx = lx } }
 // SynchronizeAt sets the synchronisation literals for error recovery.
 // See [Parser.Synchronize] for full documentation.
 func SynchronizeAt(lits ...string) ParserOptions { return func(c *emb) { c.syncLit = lits } }
-
-func Verbose() ParserOptions { return func(e *emb) { e.verbose = true } }
 
 // Init creates a new parser.
 // At least two options must be provided: (1) a reader, and (2) a lexer function.
@@ -74,8 +72,16 @@ func (p *Parser[T]) Finish() (T, error) { return p.Value, p.errors }
 // Errf triggers a panic mode with the given formatted error.
 // The position is correctly attached to the error.
 func (p *Parser[T]) Errf(format string, args ...any) {
-	panic(parseError{Position{}, fmt.Sprintf(format, args...)})
+	if p.sc.err != nil {
+		// scanner errors are usually terminal
+		p.errors = p.sc.err
+		panic(stopparsing{})
+	}
+
+	panic(parseError{p.sc.locate(p.tok), fmt.Sprintf(format, args...)})
 }
+
+type stopparsing struct{}
 
 type parseError struct {
 	pos Position
@@ -93,17 +99,6 @@ func (p *Parser[T]) More() bool {
 	return p.tok != EOF
 }
 
-func prettyrune(r rune) string {
-	if r > 0 {
-		return fmt.Sprintf("%q", r)
-	} else {
-		return fmt.Sprintf("%d", r)
-	}
-}
-
-// ErrLit is the literal value set after a failed call to [Parser.Expect]
-const ErrLit = "<error>"
-
 // Expects advances the parser to the next input, making sure it matches the token tk.
 func (p *Parser[T]) Expect(tk rune, msg string) {
 	p.lnext()
@@ -111,7 +106,7 @@ func (p *Parser[T]) Expect(tk rune, msg string) {
 		p.peek = false
 		return
 	}
-	p.Errf("expected %s, got %q instead", msg, p.tok)
+	p.Errf("expected %s, got %q instead", msg, p.tok.Lexeme)
 }
 
 // Match returns true if tk is found at the current parsing point.
@@ -119,11 +114,9 @@ func (p *Parser[T]) Expect(tk rune, msg string) {
 func (p *Parser[T]) Match(tk ...rune) bool {
 	p.lnext()
 	p.peek = true
-	for _, tk := range tk {
-		if p.tok.Type == tk {
-			p.peek = false
-			return true
-		}
+	if slices.Contains(tk, p.tok.Type) {
+		p.peek = false
+		return true
 	}
 	return false
 }
@@ -158,6 +151,11 @@ func (p *Parser[T]) Synchronize() {
 	if err == nil {
 		return
 	}
+
+	if _, ok := err.(stopparsing); ok {
+		return
+	}
+
 	pe, ok := err.(parseError)
 	if !ok {
 		panic(pe)
@@ -166,10 +164,8 @@ func (p *Parser[T]) Synchronize() {
 	p.errors = errors.Join(p.errors, pe)
 
 	for p.More() {
-		for _, slit := range p.syncLit {
-			if p.tok.Lexeme == slit {
-				return
-			}
+		if slices.Contains(p.syncLit, p.tok.Lexeme) {
+			return
 		}
 		p.Skip()
 	}

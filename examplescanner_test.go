@@ -36,14 +36,14 @@ type Lease struct {
 func ParseLease(p *parsekit.Parser[Lease]) {
 	defer p.Synchronize()
 
-	p.Expect(IdentToken, "lease")
+	p.Expect(IdentToken, `keyword "lease"`)
 	p.Expect('{', "opening bracket")
 	for p.More() {
 		if p.Match('}') {
 			return
 		}
 
-		p.Expect(IdentToken, "option")
+		p.Expect(IdentToken, "keyword (e.g. option, interface, …)")
 		switch p.Lit() {
 		case "interface":
 			p.Expect(StringToken, "interface")
@@ -78,17 +78,16 @@ func (t *LTime) UnmarshalText(dt []byte) error {
 }
 
 const (
-	NumberToken rune = -1 - iota
+	NumberToken rune = parsekit.ScanToken - iota
 	IPToken
 	DateTimeToken
 	IdentToken
 	StringToken
-	InvalidType
 )
 
 func scantk(sc *parsekit.Scanner) parsekit.Token {
 	switch tk := sc.Advance(); {
-	case tk == ' ':
+	case tk == ' ', tk == '\n':
 		return parsekit.Ignore // empty space
 
 	case tk == '{', tk == '}', tk == ';':
