@@ -81,6 +81,13 @@ func (p *Parser[T]) Errf(format string, args ...any) {
 	panic(parseError{p.sc.locate(p.tok), fmt.Sprintf(format, args...)})
 }
 
+// Err triggers a panic mode raining error err.
+// No synchronization is attempted afterwards.
+func (p *Parser[T]) Err(err error) {
+	p.errors = err
+	panic(stopparsing{})
+}
+
 type stopparsing struct{}
 
 type parseError struct {
