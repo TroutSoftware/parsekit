@@ -67,7 +67,7 @@ func Init[T any](opts ...ParserOptions) *Parser[T] {
 //	   parseConfig(p)
 //	   return p.Finish()
 //	}
-func (p *Parser[T]) Finish() (T, error) { return p.Value, p.errors }
+func (p *Parser[T]) Finish() (T, error) { p.stop(); return p.Value, p.errors }
 
 // Errf triggers a panic mode with the given formatted error.
 // The position is correctly attached to the error.
